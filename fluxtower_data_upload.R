@@ -62,6 +62,12 @@ dbClearResult(rs)
 
 # new tower data ----
 
+# libraries
+library(tidyr)
+library(dplyr)
+library(purrr)
+library(RPostgreSQL)
+
 # get analyses data
 analyses_metadata <- dbGetQuery(pg_prod, "SELECT * FROM fluxtower.measurements")
 
@@ -73,6 +79,12 @@ analyses_metadata <- dbGetQuery(pg_prod, "SELECT * FROM fluxtower.measurements")
 #   slice(-c(1:2))
 newdata <- read_csv('~/Desktop/newCR1000ec/TOA5_93_TOB1_may_30_2017_5297.flux.dat', skip = 1) %>% 
   slice(-c(1:2))
+
+# for multiple files
+list.files(".", pattern="*.dat", full.names=T, recursive=FALSE) %>% 
+  map(~read_csv(.x, skip = 1, col_names = T)) %>% 
+  map(~slice(.x, -c(1:2))) %>% 
+  map_df(~ as.data.frame(.)) -> newdata 
 
 # need to add a check to see if there are any duplicates
 nrow(newdata %>% group_by(TIMESTAMP) %>% filter(n() > 1))
@@ -94,6 +106,14 @@ newDataUpload <- newdata %>%
 
 # need to add a check to make sure measurement were matches
 nrow(newDataUpload %>% filter(is.na(measurement_id)))
+
+# inspect data params, though not much I can do if there are concerns (optional)
+newDataUpload %>% 
+  group_by(measurement_id) %>% 
+  summarise(sd = sd(value),
+            min = min(value),
+            max = max(value)) %>% 
+  inner_join(analyses_metadata[,c(1,2,4)], by = c('measurement_id' = 'id')) -> dataAssessment
 
 # approach one: insert from R ----
 
@@ -135,23 +155,6 @@ INSERT INTO fluxtower.cr1000ec
 )
 ON CONFLICT ON CONSTRAINT cr1000ec_unique_observations DO NOTHING;')
 
-# dbExecute(pg_prod,'
-# INSERT INTO fluxtower.cr1000ec
-# (
-#   date_time, 
-#   record, 
-#   measurement_id, 
-#   value
-# ) 
-# (
-#   SELECT 
-#     date_time, 
-#     record,
-#     measurement_id,
-#     value
-#   FROM fluxtower.temptable
-# );')
-  
 # clean up
 if (dbExistsTable(pg_prod, c('fluxtower', 'temptable'))) dbRemoveTable(pg_prod, c('fluxtower', 'temptable')) # make sure tbl does not exist
 
